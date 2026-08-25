@@ -1,0 +1,276 @@
+```{r, Libraries}
+library(tidyverse)
+library(readxl)
+library(kableExtra)
+library(ggrepel)
+library(pscl)
+library(patchwork)
+```
+
+```{r, Setup Data}
+vax_rates <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Kindergarten MMR Vax Rates")
+case_counts <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Case Counts (8-17)") #Change Date Here
+population_density <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Population Density")
+pa_data <- vax_rates %>%
+  left_join(case_counts, by = "county") %>%
+  left_join(population_density, by =  "county") %>%
+  mutate(
+    cases_per_100k = `case count` / population * 100000,
+    below_herd_immunity = `vaccination rate` < 0.95
+  )
+```
+
+```{r, Density and Vaccination Rate vs. Case Count}
+ggplot(pa_data, aes(x = density, y = `vaccination rate`)) +
+  geom_hline(yintercept = 0.95, linetype = "dashed", color = "red") +
+  geom_point(
+    data = filter(pa_data, `case count` == 0),
+    shape = 21, fill = "white", color = "black", size = 1.5
+  ) +
+  geom_point(
+    data = filter(pa_data, `case count` > 0),
+    aes(size = `case count`, color = `case count`),
+    alpha = 0.7
+  ) +
+  geom_text_repel(
+    data = filter(pa_data, `case count` > 0),
+    aes(label = county), size = 2
+  ) +
+  scale_x_log10(labels = comma) +
+  scale_color_viridis_c(option = "plasma") +
+  scale_size_continuous(range = c(2, 12)) +
+  labs(
+    title = "Vaccination Rate and Population Density vs. Measles Case Count",
+    x = "Population Density: log(population per square mile)",
+    y = "Kindergarten MMR Vaccination Rate",
+    size = "Case Count",
+    color = "Case Count"
+  ) +
+  theme_classic()
+```
+
+```{r, Correlation (Pearson)}
+cor.test(pa_data$density, pa_data$`vaccination rate`, method = "pearson")
+cor.test(pa_data$density, pa_data$`case count`, method = "pearson")
+cor.test(pa_data$`vaccination rate`, pa_data$`case count`, method = "pearson")
+```
+
+```{r, Correlation (Spearman)}
+cor.test(pa_data$density, pa_data$`vaccination rate`, method = "spearman")
+cor.test(pa_data$density, pa_data$`case count`, method = "spearman")
+cor.test(pa_data$`vaccination rate`, pa_data$`case count`, method = "spearman")
+```
+
+```{r, Correlation (Kendall)}
+cor.test(pa_data$density, pa_data$`vaccination rate`, method = "kendall")
+cor.test(pa_data$density, pa_data$`case count`, method = "kendall")
+cor.test(pa_data$`vaccination rate`, pa_data$`case count`, method = "kendall")
+```
+
+```{r, Lancaster County Highlight}
+library(kableExtra)
+
+lancaster_ring <- pa_data %>%
+  filter(county %in% c("Lancaster", "York", "Dauphin", "Lebanon", "Berks", "Chester",
+                        "Delaware", "Philadelphia", "Adams", "Cumberland", "Montgomery")) %>%
+  mutate(
+    ring = factor(
+      case_when(
+        county == "Lancaster" ~ "Epicenter",
+        county %in% c("Chester", "Berks", "Lebanon", "Dauphin", "York") ~ "Direct neighbor",
+        TRUE ~ "Second ring"
+      ),
+      levels = c("Epicenter", "Direct neighbor", "Second ring")
+    )
+  )
+
+lancaster_ring %>%
+  arrange(ring) %>%
+  dplyr::select(county, ring, density, `vaccination rate`, `case count`, cases_per_100k) %>%
+  kable(digits = 2, caption = "Lancaster County and its geographic neighbors, by ring") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  column_spec(5, background = spec_color(lancaster_ring$`case count`[order(lancaster_ring$ring)], option = "plasma", direction = -1)) %>%
+  row_spec(which(sort(lancaster_ring$ring) == "Epicenter"), bold = TRUE, background = "#fff3cd")
+
+lancaster_ring %>%
+  ggplot(aes(x = `case count`, y = reorder(county, `case count`), color = ring)) +
+  geom_segment(aes(xend = 0, yend = county), linewidth = 1) +
+  geom_point(size = 4) +
+  scale_color_manual(values = c("Epicenter" = "#d62728", "Direct neighbor" = "#ff7f0e", "Second ring" = "#1f77b4")) +
+  labs(title = "Cases by adjacency to Lancaster County", x = "Case count", y = NULL, color = NULL) +
+  theme_minimal(base_size = 13)
+```
+
+```{r, Poisson Model}
+poisson_model <- glm(
+  `case count` ~ `vaccination rate` + density, offset = log(population), family = poisson, data = pa_data
+)
+summary(poisson_model)
+deviance(poisson_model)/df.residual(poisson_model)
+```
+
+```{r, Negative Binomial Model, warning = FALSE}
+nb_model <- MASS::glm.nb(
+  `case count` ~ `vaccination rate` + density + offset(log(population)), data = pa_data)
+coef(summary(nb_model))
+```
+
+```{r, Zero-Inflated Negative Binomial Model}
+zinb_model <- zeroinfl(
+  `case count` ~ `vaccination rate` + density + offset(log(population)) | 1, data = pa_data, dist = "negbin"
+)
+summary(zinb_model)
+```
+
+```{r, NB and ZINB Comparison}
+AIC(zinb_model, nb_model)
+```
+
+```{r, Spatial Autocorrelation}
+pa_counties <- counties(state = "PA", cb = TRUE, year = 2022, class = "sf") %>%
+  dplyr::select(county = NAME, geometry)
+pa_spatial <- pa_counties %>%
+  left_join(case_counts %>% dplyr::select(county, `case count`), by = "county") %>%
+  mutate(`case count` = replace_na(`case count`, 0))
+# Moran's I
+nb <- poly2nb(pa_spatial, queen = TRUE)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+moran.test(pa_spatial$`case count`, lw, zero.policy = TRUE)
+# Local Moran's I
+local_moran <- localmoran(pa_spatial$`case count`, lw, zero.policy = TRUE)
+pa_spatial$local_i <- local_moran[, "Ii"]
+pa_spatial$local_p <- local_moran[, "Pr(z != E(Ii))"]
+pa_spatial %>%
+  st_drop_geometry() %>%
+  filter(local_p < 0.05) %>%
+  arrange(desc(local_i)) %>%
+  dplyr::select(county, `case count`, local_i, local_p) %>%
+  kable(digits = 3, caption = "Counties forming statistically significant local spatial clusters (p < 0.05)")
+local_clusters <- pa_spatial %>%
+  st_drop_geometry() %>%
+  filter(local_p < 0.05) %>%
+  mutate(
+    cluster_type = if_else(local_i > 0, "High-high cluster", "Outlier (low amid high)")
+  ) %>%
+  arrange(desc(local_i)) %>%
+  dplyr::select(county, cluster_type, `case count`, local_i, local_p)
+
+local_clusters %>%
+  kable(digits = 3, caption = "Counties forming statistically significant local spatial clusters (p < 0.05)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE) %>%
+  column_spec(3, background = spec_color(local_clusters$`case count`, option = "plasma", direction = -1)) %>%
+  row_spec(which(local_clusters$cluster_type == "High-high cluster"), bold = TRUE, background = "#fff3cd") %>%
+  row_spec(which(local_clusters$cluster_type == "Outlier (low amid high)"), italic = TRUE, background = "#e3f2fd")
+```
+
+```{r, Load Data for Exemption Analysis}
+school_data <- read_csv("Pennsylvania school immunization rates, 2025-2026 – Pennsylvania school immunization rates.csv") %>%
+  filter(Grade == "Kindergarten") %>%
+  mutate(
+    mmr_pct = as.numeric(str_remove(`MMR Percent`, "%")),
+    religious_pct = as.numeric(str_remove(`Religious Exemption Percent`, "%")),
+    philosophical_pct = as.numeric(str_remove(`Philosophical Exemption Percent`, "%")),
+  ) %>%
+  filter(!is.na(mmr_pct))
+county_variance <- school_data %>%
+  group_by(County) %>%
+  summarize(
+    n_schools = n(),
+    sd_mmr = sd(mmr_pct, na.rm = TRUE),
+    range_mmr = max(mmr_pct, na.rm = TRUE) - min(mmr_pct, na.rm = TRUE),
+    mean_religious_exemption = mean(religious_pct, na.rm = TRUE),
+    mean_philosophical_exemption = mean(philosophical_pct, na.rm = TRUE)
+  ) %>%
+  rename(county = County)
+pa_data <- pa_data %>%
+  left_join(county_variance, by = "county")
+# Forest County omitted as it has only two K schools with 8 and 17 students.
+```
+
+```{r, ZINB w/Exemption}
+zinb_full <- zeroinfl(
+  `case count` ~ `vaccination rate` + density + sd_mmr + mean_religious_exemption + offset(log(population)) | 1,
+  data = pa_data,
+  dist = "negbin"
+)
+summary(zinb_full)
+AIC(zinb_full, zinb_model)
+```
+
+```{r, Lancaster County School Exemptions}
+lancaster_schools <- school_data %>%
+  filter(County == "Lancaster", !is.na(mmr_pct)) %>%
+  mutate(plain_flagged = str_detect(School, regex("Mennonite|Amish|Anabaptist", ignore_case = TRUE)))
+lancaster_schools %>%
+  group_by(plain_flagged) %>%
+  summarize(n = n(), mean_mmr = mean(mmr_pct), median_mmr = median(mmr_pct), sd_mmr = sd(mmr_pct))
+wilcox.test(mmr_pct ~ plain_flagged, lancaster_schools)
+t.test(mmr_pct ~ plain_flagged, lancaster_schools)
+```
+
+```{r}
+# County Boundaries
+pa_counties <- counties(state = "PA", cb = TRUE, year = 2022, class = "sf") %>%
+  dplyr::select(county = NAME, geometry)
+
+# Remove two virtual charter schools with addresses in Dauphin County (Harrisburg)
+school_data_filtered <- school_data %>%
+  filter(!School %in% c("Reach Cyber CS", "Commonwealth Charter Academy CS"))
+# County-Level Metrics
+county_map_data <- school_data_filtered %>%
+  filter(!is.na(mmr_pct)) %>%
+  group_by(County) %>%
+  summarize(
+    total_enrolled                = sum(`Total Students Enrolled`, na.rm = TRUE),
+    enrolled_below_95             = sum(`Total Students Enrolled`[mmr_pct < 95], na.rm = TRUE),
+    pct_students_below_95         = enrolled_below_95 / total_enrolled,
+    weighted_religious_exemption  = sum(`Total Students Enrolled` * religious_pct, na.rm = TRUE) / total_enrolled,
+    worst_school_mmr              = min(mmr_pct, na.rm = TRUE),
+    kids_in_severe_pocket         = sum(`Total Students Enrolled`[mmr_pct < 70], na.rm = TRUE)
+  ) %>%
+  rename(county = County)
+map_data <- pa_counties %>%
+  left_join(county_map_data, by = "county")
+
+# Map 1: enrollment-weighted share below 95%
+map1 <- ggplot(map_data) +
+  geom_sf(aes(fill = pct_students_below_95), color = "white", linewidth = 0.2) +
+  scale_fill_viridis_c(option = "mako", labels = scales::percent, name = "% kindergartners below 95% MMR") +
+  labs(title = "Share below herd-immunity threshold (county-wide average)") +
+  theme_void(base_size = 11)
+
+# Map 2: enrollment-weighted mean religious exemption rate
+map2 <- ggplot(map_data) +
+  geom_sf(aes(fill = weighted_religious_exemption), color = "white", linewidth = 0.2) +
+  scale_fill_viridis_c(option = "mako", labels = scales::percent_format(scale = 1), name = "Weighted mean religious exemption") +
+  labs(title = "Religious exemption rate (county-wide average)") +
+  theme_void(base_size = 11)
+
+# Map 3: worst single school per county
+map3 <- ggplot(map_data) +
+  geom_sf(aes(fill = worst_school_mmr), color = "white", linewidth = 0.2) +
+  scale_fill_viridis_c(option = "viridis", labels = scales::percent_format(scale = 1), name = "Lowest single school MMR rate") +
+  labs(title = "Most severe school per county (pocket detection)") +
+  theme_void(base_size = 11)
+
+# Map 4: absolute number of kids in severely under-vaccinated schools
+map4 <- ggplot(map_data) +
+  geom_sf(aes(fill = kids_in_severe_pocket), color = "white", linewidth = 0.2) +
+  scale_fill_viridis_c(option = "viridis", name = "Children in schools below 70% MMR") +
+  labs(title = "Size of severe pocket (absolute count)") +
+  theme_void(base_size = 11)
+
+# Map 5: cases per 1000 per county
+map_data <- map_data %>%
+  left_join(pa_data %>% dplyr::select(county, `case count`, population), by = "county")
+map5 <- ggplot(map_data) +
+  geom_sf(aes(fill = (`case count` / population) * 100000), color = "white", linewidth = 0.2) +
+  scale_fill_viridis_c(option = "plasma", name = "Cases per 100,000 per County") +
+  labs(title = "Cases per 100,000 per County", subtitle = paste("As of", Sys.Date())) +
+  theme_void(base_size = 11)
+print(map1)
+print(map2)
+print(map3)
+print(map4)
+print(map5)
+```
