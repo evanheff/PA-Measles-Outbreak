@@ -5,6 +5,9 @@ library(kableExtra)
 library(ggrepel)
 library(pscl)
 library(patchwork)
+library(scales)
+library(tigris)
+library(spdep)
 ```
 
 ```{r, Setup Data}
@@ -68,8 +71,6 @@ cor.test(pa_data$`vaccination rate`, pa_data$`case count`, method = "kendall")
 ```
 
 ```{r, Lancaster County Highlight}
-library(kableExtra)
-
 lancaster_ring <- pa_data %>%
   filter(county %in% c("Lancaster", "York", "Dauphin", "Lebanon", "Berks", "Chester",
                         "Delaware", "Philadelphia", "Adams", "Cumberland", "Montgomery")) %>%
