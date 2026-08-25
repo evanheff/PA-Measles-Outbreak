@@ -1,7 +1,7 @@
 # PA-Measles-Outbreak
 An analysis of Pennsylvania's 2026 measles outbreak, testing whether population density or vaccination rate better explains county-level cases counts and whether the outbreak's geographic pattern reflects density-driven spread or communal clustering of under-vaccination populations.
 
-**Motivation**
+**Motivation** /n
 PA's current measles outbreak has largely been concentrated in Lancaster County, home to a large Plain (Amish/Mennonite) community. A common intuition is that lower-density and more rural areas should see less disease spread than urban areas. This project tests that intuition directly against the alternative hypothesis that vaccination rate, and specifically social clustering of under-vaccination within insular communities is a better explanation of measles transmission, regardless of population density.
 
 **Key Findings (As of 8/25/26)**
