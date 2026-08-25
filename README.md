@@ -36,6 +36,7 @@ Allegheny County has a larger absolute number of under-vaccinated kindergartener
 **Correlation**
 
 Pearson (r), Spearman (rho), Kendall (tau) run in parallel since case counts heavily zero-inflated and skewed, which violates the assumptions behind any single methods.
+
 **Regression**
 
 Poisson, negative binomial, zero-inflated negative binomial; each fit with a log population offset to model case rate rather than raw count. Model choice was driven by diagnosed overdispersion and at the outbreak's earlier stages, convergence of the plain negative binomial. This was resolved by the zero-inflated model, and becomes less of a concern as more counties report cases.
