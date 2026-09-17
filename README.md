@@ -51,9 +51,6 @@ School-level MMR vaccination rate variance, with Wilcoxon and Welch's t-test com
 
 **Limitations**
 
-**Cross-section**
-
-Currently is only cross-sectional, but the outbreak progresses, some causality may be able to be seen.
 **Live outbreak data**
 
 Cases update three times per week (M, W, F). Conclusions about statistical significance must be checked again after each case count update.
