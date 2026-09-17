@@ -1,4 +1,10 @@
-```{r, Libraries}
+---
+title: "PA Measles Outbreak Density and Vaccination Analysis"
+author: "Evan Heffelfinger"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r, Libraries, warning = FALSE}
 library(tidyverse)
 library(readxl)
 library(kableExtra)
@@ -10,9 +16,12 @@ library(tigris)
 library(spdep)
 ```
 
+```{r setup, include=FALSE}
+```
+
 ```{r, Setup Data}
 vax_rates <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Kindergarten MMR Vax Rates")
-case_counts <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Case Counts (8-17)") #Change Date Here
+case_counts <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Case Counts (9-16)") #Change Date Here
 population_density <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Population Density")
 pa_data <- vax_rates %>%
   left_join(case_counts, by = "county") %>%
@@ -188,6 +197,12 @@ pa_data <- pa_data %>%
 # Forest County omitted as it has only two K schools with 8 and 17 students.
 ```
 
+```{r, NB w/Exemption}
+nb_model_full <- MASS::glm.nb(
+  `case count` ~ `vaccination rate` + density + sd_mmr + mean_religious_exemption + offset(log(population)), data = pa_data)
+summary(nb_model_full)
+```
+
 ```{r, ZINB w/Exemption}
 zinb_full <- zeroinfl(
   `case count` ~ `vaccination rate` + density + sd_mmr + mean_religious_exemption + offset(log(population)) | 1,
@@ -195,7 +210,6 @@ zinb_full <- zeroinfl(
   dist = "negbin"
 )
 summary(zinb_full)
-AIC(zinb_full, zinb_model)
 ```
 
 ```{r, Lancaster County School Exemptions}
@@ -208,8 +222,24 @@ lancaster_schools %>%
 wilcox.test(mmr_pct ~ plain_flagged, lancaster_schools)
 t.test(mmr_pct ~ plain_flagged, lancaster_schools)
 ```
+```{r, Plain-Community vs. Other Lancaster Schools MMR}
+lancaster_schools %>%
+  ggplot(aes(x = plain_flagged, y = mmr_pct)) +
+  geom_boxplot(aes(fill = plain_flagged), width = 0.4, alpha = 0.3, outlier.shape = NA) +
+  geom_jitter(aes(color = plain_flagged), width = 0.15, size = 3, alpha = 0.8) +
+  scale_x_discrete(labels = c("FALSE" = "Other schools\n(n = 76)", "TRUE" = "Plain-community\nschools (n = 7)")) +
+  scale_fill_manual(values = c("FALSE" = "#1f77b4", "TRUE" = "#d62728"), guide = "none") +
+  scale_color_manual(values = c("FALSE" = "#1f77b4", "TRUE" = "#d62728"), guide = "none") +
+  labs(
+    title = "Kindergarten MMR rate: Lancaster County",
+    x = NULL,
+    y = "Kindergarten MMR vaccination rate"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none")
+```
 
-```{r}
+```{r, Maps}
 # County Boundaries
 pa_counties <- counties(state = "PA", cb = TRUE, year = 2022, class = "sf") %>%
   dplyr::select(county = NAME, geometry)
@@ -236,28 +266,28 @@ map_data <- pa_counties %>%
 # Map 1: enrollment-weighted share below 95%
 map1 <- ggplot(map_data) +
   geom_sf(aes(fill = pct_students_below_95), color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "mako", labels = scales::percent, name = "% kindergartners below 95% MMR") +
+  scale_fill_viridis_c(option = "mako", labels = scales::percent, name = "Kindergartners below \n95% MMR") +
   labs(title = "Share below herd-immunity threshold (county-wide average)") +
   theme_void(base_size = 11)
 
 # Map 2: enrollment-weighted mean religious exemption rate
 map2 <- ggplot(map_data) +
   geom_sf(aes(fill = weighted_religious_exemption), color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "mako", labels = scales::percent_format(scale = 1), name = "Weighted mean religious exemption") +
+  scale_fill_viridis_c(option = "mako", labels = scales::percent_format(scale = 1), name = "Weighted mean \nreligious exemption") +
   labs(title = "Religious exemption rate (county-wide average)") +
   theme_void(base_size = 11)
 
 # Map 3: worst single school per county
 map3 <- ggplot(map_data) +
   geom_sf(aes(fill = worst_school_mmr), color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "viridis", labels = scales::percent_format(scale = 1), name = "Lowest single school MMR rate") +
+  scale_fill_viridis_c(option = "viridis", labels = scales::percent_format(scale = 1), name = "Lowest single school \nMMR rate") +
   labs(title = "Most severe school per county (pocket detection)") +
   theme_void(base_size = 11)
 
 # Map 4: absolute number of kids in severely under-vaccinated schools
 map4 <- ggplot(map_data) +
   geom_sf(aes(fill = kids_in_severe_pocket), color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "viridis", name = "Children in schools below 70% MMR") +
+  scale_fill_viridis_c(option = "viridis", name = "Children in schools \nbelow 70% MMR") +
   labs(title = "Size of severe pocket (absolute count)") +
   theme_void(base_size = 11)
 
@@ -266,7 +296,7 @@ map_data <- map_data %>%
   left_join(pa_data %>% dplyr::select(county, `case count`, population), by = "county")
 map5 <- ggplot(map_data) +
   geom_sf(aes(fill = (`case count` / population) * 100000), color = "white", linewidth = 0.2) +
-  scale_fill_viridis_c(option = "plasma", name = "Cases per 100,000 per County") +
+  scale_fill_viridis_c(option = "plasma", name = "Cases per 100,000 \nper County") +
   labs(title = "Cases per 100,000 per County", subtitle = paste("As of", Sys.Date())) +
   theme_void(base_size = 11)
 print(map1)
@@ -274,4 +304,254 @@ print(map2)
 print(map3)
 print(map4)
 print(map5)
+```
+
+```{r, Load All Pull Snapshots}
+pull_dates <- tribble(
+  ~sheet_suffix, ~pull_date,
+  "8-17", as.Date("2026-08-17"),
+  "8-21", as.Date("2026-08-21"),
+  "8-24", as.Date("2026-08-24"),
+  "8-26", as.Date("2026-08-26"),
+  "8-28", as.Date("2026-08-28"),
+  "8-31", as.Date("2026-08-31"),
+  "9-2",  as.Date("2026-09-02"),
+  "9-4",  as.Date("2026-09-04"),
+  "9-9",  as.Date("2026-09-09"),
+  "9-11", as.Date("2026-09-11"),
+  "9-14", as.Date("2026-09-14"),
+  "9-16", as.Date("2026-09-16")
+)
+
+all_pulls <- pull_dates %>%
+  mutate(
+    county_data = map(sheet_suffix, function(s) {
+      sheet_name <- paste0("Case Counts (", s, ")")
+      read_excel("PA Measles Outbreak Analysis.xlsx", sheet = sheet_name) %>%
+        rename(cases = `case count`)
+    })
+  ) %>%
+  unnest(county_data) %>%
+  left_join(population_density %>% dplyr::select(county, population), by = "county") %>%
+  arrange(pull_date)
+```
+
+```{r, Statewide Cumulative Case Rate}
+daily_totals <- all_pulls %>%
+  group_by(pull_date) %>%
+  summarize(total_cases = sum(cases, na.rm = TRUE)) %>%
+  arrange(pull_date) %>%
+  mutate(
+    new_cases = total_cases - lag(total_cases, default = first(total_cases)),
+    days_elapsed = as.numeric(pull_date - lag(pull_date)),
+    new_cases_per_day = if_else(
+      is.na(days_elapsed), NA_real_,
+      new_cases / days_elapsed
+    )
+  )
+
+ggplot(daily_totals, aes(x = pull_date, y = total_cases)) +
+  geom_line(color = "#1f77b4", linewidth = 1) +
+  geom_point(size = 2.5, color = "#1f77b4") +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week") +
+  labs(
+    title = "Statewide Cumulative Measles Case Count",
+    x = "Date",
+    y = "Cumulative Cases"
+  ) +
+  theme_classic(base_size = 13)
+```
+
+```{r, County-Level Case Trajectories (Overlay)}
+counties_with_cases <- all_pulls %>%
+  group_by(county) %>%
+  summarize(ever_had_cases = max(cases, na.rm = TRUE) > 0) %>%
+  filter(ever_had_cases) %>%
+  pull(county)
+
+county_order <- all_pulls %>%
+  filter(pull_date == max(pull_date), county %in% counties_with_cases) %>%
+  arrange(desc(cases)) %>%
+  pull(county)
+
+top_n <- 12 
+top_counties <- head(county_order, top_n)
+
+county_active <- all_pulls %>%
+  filter(county %in% counties_with_cases) %>%
+  mutate(
+    county = factor(county, levels = county_order),
+    is_top = county %in% top_counties,
+    line_width = if_else(is_top, 1, 0.4),
+    line_alpha = if_else(is_top, 0.95, 0.3)
+  )
+
+label_data <- county_active %>%
+  filter(pull_date == max(pull_date), is_top)
+
+top_colors <- scales::viridis_pal(option = "turbo")(top_n)
+color_values <- setNames(
+  c(top_colors, rep("grey75", nlevels(county_active$county) - top_n)),
+  levels(county_active$county)
+)
+
+n_other <- nlevels(county_active$county) - top_n
+max_other <- county_active %>%
+  filter(!is_top, pull_date == max(pull_date)) %>%
+  summarize(m = max(cases, na.rm = TRUE)) %>%
+  pull(m)
+
+ggplot(county_active, aes(x = pull_date, y = cases, group = county, color = county)) +
+  geom_line(aes(linewidth = line_width, alpha = line_alpha)) +
+  geom_point(aes(alpha = line_alpha), size = 1.2) +
+  scale_linewidth_identity() +
+  scale_alpha_identity() +
+  geom_text_repel(
+    data = label_data,
+    aes(label = county),
+    size = 3,
+    direction = "y",
+    hjust = 0,
+    nudge_x = 1,
+    segment.size = 0.3,
+    min.segment.length = 0,
+    max.overlaps = Inf
+  ) +
+  scale_color_manual(values = color_values, guide = "none") +
+  scale_y_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1),
+    breaks = c(0, 1, 2, 5, 10, 20, 50, 100, 200, 300)
+  ) +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week", expand = expansion(mult = c(0.02, 0.12))) +
+  labs(
+    title = "County-Level Measles Case Trajectories",
+    subtitle = paste("Top", top_n, "counties by case count, as of", format(max(county_active$pull_date), "%B %d")),
+    x = "Date", y = "Case count (log)"
+  ) +
+  theme_classic(base_size = 12)
+```
+
+```{r, Refit NB and ZINB Across All Snapshots}
+model_inputs <- pull_dates %>%
+  mutate(
+    fit_data = map(sheet_suffix, function(s) {
+      sheet_name <- paste0("Case Counts (", s, ")")
+      read_excel("PA Measles Outbreak Analysis.xlsx", sheet = sheet_name) %>%
+        rename(cases = `case count`) %>%
+        left_join(vax_rates, by = "county") %>%
+        left_join(population_density, by = "county") %>%
+        rename(vax_rate = `vaccination rate`)
+    })
+  )
+
+fit_one_date <- function(df) {
+  nb_fit <- MASS::glm.nb(cases ~ vax_rate + density + offset(log(population)), data = df)
+  zinb_fit <- zeroinfl(cases ~ vax_rate + density + offset(log(population)) | 1, data = df, dist = "negbin")
+
+  nb_coef <- coef(summary(nb_fit))
+  zinb_coef <- coef(summary(zinb_fit))$count
+  zi_intercept <- coef(summary(zinb_fit))$zero["(Intercept)", "Estimate"]
+
+  tibble(
+    model = c("NB", "NB", "ZINB", "ZINB"),
+    term = c("Vaccination Rate", "Density", "Vaccination Rate", "Density"),
+    estimate = c(
+      nb_coef["vax_rate", "Estimate"], nb_coef["density", "Estimate"],
+      zinb_coef["vax_rate", "Estimate"], zinb_coef["density", "Estimate"]
+    ),
+    se = c(
+      nb_coef["vax_rate", "Std. Error"], nb_coef["density", "Std. Error"],
+      zinb_coef["vax_rate", "Std. Error"], zinb_coef["density", "Std. Error"]
+    ),
+    aic_nb = AIC(nb_fit),
+    aic_zinb = AIC(zinb_fit),
+    zi_intercept = zi_intercept
+  )
+}
+
+model_over_time <- model_inputs %>%
+  mutate(model_results = map(fit_data, fit_one_date)) %>%
+  dplyr::select(pull_date, model_results) %>%
+  unnest(model_results)
+```
+
+```{r, Coefficient Stability Chart}
+model_over_time %>%
+  mutate(lower = estimate - 1.96 * se, upper = estimate + 1.96 * se) %>%
+  ggplot(aes(x = pull_date, y = estimate, color = model, fill = model)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), alpha = 0.15, color = NA) +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  facet_wrap(~term, scales = "free_y", ncol = 1) +
+  scale_color_manual(values = c("NB" = "#1f77b4", "ZINB" = "#d62728")) +
+  scale_fill_manual(values = c("NB" = "#1f77b4", "ZINB" = "#d62728")) +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week") +
+  labs(
+    title = "NB and ZINB Coefficient Stability Over Time",
+    x = "Date", y = "Coefficient estimate", color = "Model", fill = "Model"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r, AIC Comparison Chart (Excluding Early Outlier)}
+aic_data <- model_over_time %>%
+  distinct(pull_date, aic_nb, aic_zinb) %>%
+  pivot_longer(cols = c(aic_nb, aic_zinb), names_to = "model", values_to = "aic") %>%
+  mutate(model = recode(model, aic_nb = "NB", aic_zinb = "ZINB"))
+
+excluded_point <- aic_data %>% filter(aic > 500)
+
+aic_data %>%
+  filter(aic <= 500) %>%
+  ggplot(aes(x = pull_date, y = aic, color = model)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c("NB" = "#1f77b4", "ZINB" = "#d62728")) +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week") +
+  labs(
+    title = "NB vs. ZINB Model Fit Over Time (AIC)",
+    x = "Date", y = "AIC", color = "Model"
+  ) +
+  theme_minimal(base_size = 13)
+```
+
+```{r, Correlations With Case Count Over Time}
+compute_correlations <- function(df) {
+  tibble(
+    pair = c("Density vs. Cases", "Vaccination Rate vs. Cases"),
+    pearson = c(
+      cor(df$density, df$cases, method = "pearson"),
+      cor(df$vax_rate, df$cases, method = "pearson")
+    ),
+    spearman = c(
+      cor(df$density, df$cases, method = "spearman"),
+      cor(df$vax_rate, df$cases, method = "spearman")
+    ),
+    kendall = c(
+      cor(df$density, df$cases, method = "kendall"),
+      cor(df$vax_rate, df$cases, method = "kendall")
+    )
+  )
+}
+
+correlations_over_time <- model_inputs %>%
+  mutate(corr_results = map(fit_data, compute_correlations)) %>%
+  dplyr::select(pull_date, corr_results) %>%
+  unnest(corr_results) %>%
+  pivot_longer(cols = c(pearson, spearman, kendall), names_to = "method", values_to = "r")
+```
+
+```{r, Correlation Trend Chart, fig.width = 6, fig.height = 4}
+ggplot(correlations_over_time, aes(x = pull_date, y = r, color = method)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line(linewidth = 0.9) +
+  geom_point(size = 2) +
+  facet_wrap(~pair, ncol = 1, scales = "free_y") +
+  scale_color_manual(values = c("pearson" = "#1f77b4", "spearman" = "#ff7f0e", "kendall" = "#2ca02c")) +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week") +
+  labs(
+    title = "Correlation With Case Count Over Time",
+    x = "Date", y = "Correlation coefficient", color = "Method"
+  ) +
+  theme_minimal(base_size = 13)
 ```
