@@ -541,7 +541,7 @@ correlations_over_time <- model_inputs %>%
   pivot_longer(cols = c(pearson, spearman, kendall), names_to = "method", values_to = "r")
 ```
 
-```{r, Correlation Trend Chart, fig.width = 6, fig.height = 4}
+```{r, Correlation Trend Chart}
 ggplot(correlations_over_time, aes(x = pull_date, y = r, color = method)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   geom_line(linewidth = 0.9) +
