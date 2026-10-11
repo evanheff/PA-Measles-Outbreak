@@ -17,11 +17,12 @@ library(spdep)
 ```
 
 ```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = "/Users/evanheffelfinger/Library/CloudStorage/OneDrive-UniversityofPittsburgh/Measles/Database")
 ```
 
-```{r, Setup Data}
+```{r, Setup Data, include=FALSE}
 vax_rates <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Kindergarten MMR Vax Rates")
-case_counts <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Case Counts (9-16)") #Change Date Here
+case_counts <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Case Counts (*date*)") #Change Date Here
 population_density <- read_excel("PA Measles Outbreak Analysis.xlsx", sheet = "Population Density")
 pa_data <- vax_rates %>%
   left_join(case_counts, by = "county") %>%
@@ -197,21 +198,6 @@ pa_data <- pa_data %>%
 # Forest County omitted as it has only two K schools with 8 and 17 students.
 ```
 
-```{r, NB w/Exemption}
-nb_model_full <- MASS::glm.nb(
-  `case count` ~ `vaccination rate` + density + sd_mmr + mean_religious_exemption + offset(log(population)), data = pa_data)
-summary(nb_model_full)
-```
-
-```{r, ZINB w/Exemption}
-zinb_full <- zeroinfl(
-  `case count` ~ `vaccination rate` + density + sd_mmr + mean_religious_exemption + offset(log(population)) | 1,
-  data = pa_data,
-  dist = "negbin"
-)
-summary(zinb_full)
-```
-
 ```{r, Lancaster County School Exemptions}
 lancaster_schools <- school_data %>%
   filter(County == "Lancaster", !is.na(mmr_pct)) %>%
@@ -320,7 +306,9 @@ pull_dates <- tribble(
   "9-9",  as.Date("2026-09-09"),
   "9-11", as.Date("2026-09-11"),
   "9-14", as.Date("2026-09-14"),
-  "9-16", as.Date("2026-09-16")
+  "9-16", as.Date("2026-09-16"),
+  "9-30", as.Date("2026-09-30"),
+  "10-5", as.Date("2026-10-05")
 )
 
 all_pulls <- pull_dates %>%
@@ -430,6 +418,90 @@ ggplot(county_active, aes(x = pull_date, y = cases, group = county, color = coun
   ) +
   theme_classic(base_size = 12)
 ```
+```{r, County-Level Case Trajectories per Capita (Overlay)}
+ccounties_with_cases <- all_pulls %>%
+  group_by(county) %>%
+  summarize(ever_had_cases = max(cases, na.rm = TRUE) > 0) %>%
+  filter(ever_had_cases) %>%
+  pull(county)
+
+county_population <- population_density %>%
+  select(county, population) %>%
+  mutate(
+    population = as.numeric(
+      gsub(",", "", as.character(unlist(population)))
+    )
+  ) %>%
+  distinct(county, .keep_all = TRUE)
+
+county_order <- all_pulls %>%
+  filter(pull_date == max(pull_date), county %in% counties_with_cases) %>%
+  select(-population) %>%
+  left_join(county_population, by = "county") %>%
+  mutate(cases_per_capita = (cases / population) * 100000) %>%
+  arrange(desc(cases_per_capita)) %>%
+  pull(county)
+
+top_n <- 12 
+top_counties <- head(county_order, top_n)
+
+county_active_capita <- all_pulls %>%
+  filter(county %in% counties_with_cases) %>%
+  select(-population) %>%
+  left_join(county_population, by = "county") %>%
+  mutate(
+    cases_per_capita = (cases / population) * 100000,
+    county = factor(county, levels = county_order),
+    is_top = county %in% top_counties,
+    line_width = if_else(is_top, 1, 0.4),
+    line_alpha = if_else(is_top, 0.95, 0.3)
+  )
+
+label_data <- county_active_capita %>%
+  filter(pull_date == max(pull_date), is_top)
+
+top_colors <- scales::viridis_pal(option = "turbo")(top_n)
+color_values <- setNames(
+  c(top_colors, rep("grey75", nlevels(county_active_capita$county) - top_n)),
+  levels(county_active_capita$county)
+)
+
+n_other <- nlevels(county_active_capita$county) - top_n
+max_other <- county_active_capita %>%
+  filter(!is_top, pull_date == max(pull_date)) %>%
+  summarize(m = max(cases_per_capita, na.rm = TRUE)) %>%
+  pull(m)
+
+ggplot(county_active_capita, aes(x = pull_date, y = cases_per_capita, group = county, color = county)) +
+  geom_line(aes(linewidth = line_width, alpha = line_alpha)) +
+  geom_point(aes(alpha = line_alpha), size = 1.2) +
+  scale_linewidth_identity() +
+  scale_alpha_identity() +
+  geom_text_repel(
+    data = label_data,
+    aes(label = county),
+    size = 3,
+    direction = "y",
+    hjust = 0,
+    nudge_x = 1,
+    segment.size = 0.3,
+    min.segment.length = 0,
+    max.overlaps = Inf
+  ) +
+  scale_color_manual(values = color_values, guide = "none") +
+  scale_y_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1),
+    breaks = c(0, 1, 2, 5, 10, 20, 50, 100, 200, 300)
+  ) +
+  scale_x_date(date_labels = "%b %d", date_breaks = "1 week", expand = expansion(mult = c(0.02, 0.12))) +
+  labs(
+    title = "County-Level Measles Case Trajectories per Capita",
+    subtitle = paste("Top", top_n, "counties by case count, as of", format(max(county_active_capita$pull_date), "%B %d")),
+    x = "Date", y = "Cases per 100,000 (log)"
+  ) +
+  theme_classic(base_size = 12)
+```
+
 
 ```{r, Refit NB and ZINB Across All Snapshots}
 model_inputs <- pull_dates %>%
